@@ -15,10 +15,9 @@ def process_data(adata):
     sc.pp.calculate_qc_metrics(adata, percent_top=None, log1p=False, inplace=True)
     # the library size factor is defined as the total counts per cell/spot divided by the median total counts of all the cells. in order to keep all the cells/spots having the same number of counts
     adata.obs["size_factor"] = adata.obs["total_counts"] / np.median(adata.obs["total_counts"])
-    #adata.obs["size_factor"] = adata.obs["total_counts"] / 10000
-    adata.layers["raw_counts"] = adata.X
-    adata.X = np.matmul(np.linalg.inv(np.diag(adata.obs["size_factor"])), adata.X)
 
+    adata.layers["raw_counts"] = adata.X
+    sc.pp.normalize_total(adata)
     # log and calculate the z-score of the counts
     sc.pp.log1p(adata)
     sc.pp.scale(adata)
@@ -32,6 +31,26 @@ def get_spearmanr(tuple):
     x,y = tuple
     res = stats.spearmanr(x,y)
     return res.statistic
+
+def cosine_similarity(A, B, eps=1e-8):
+    """
+    Computes cosine similarity between two matrices A and B using numpy.
+    
+    Args:
+        A (np.ndarray): shape (n_samples_A, n_features)
+        B (np.ndarray): shape (n_samples_B, n_features)
+        eps (float): small value to avoid division by zero
+    
+    Returns:
+        cosine_sim (np.ndarray): shape (n_samples_A, n_samples_B)
+    """
+    # Normalize A and B row-wise
+    A_norm = A / (np.linalg.norm(A, axis=1, keepdims=True) + eps)
+    B_norm = B / (np.linalg.norm(B, axis=1, keepdims=True) + eps)
+
+    # Cosine similarity = dot product of normalized vectors
+    cosine_sim = np.dot(A_norm, B_norm.T)
+    return cosine_sim
 
 def calculate_rank_corr(adata1, adata2, gene_names, flag="Spearman"):
     mat1 = adata1[:,gene_names].X
@@ -52,8 +71,9 @@ def calculate_rank_corr(adata1, adata2, gene_names, flag="Spearman"):
 
     return res
 
-def calculate_corr(adata1, adata2, gene_names, flag="Pearson"):
-
+def calculate_corr(adata1, adata2, gene_names, flag):
+    # Since we use normalized count in the model, Pearson correlation is equivalent to cosine similarity
+    # Ref: https://brenocon.com/blog/2012/03/cosine-similarity-pearson-correlation-and-ols-coefficients/
     if flag=="Pearson":
         seq_data_copy = adata1.copy()
         spatial_data_partial_copy = adata2.copy()
@@ -64,7 +84,14 @@ def calculate_corr(adata1, adata2, gene_names, flag="Pearson"):
         corr_sc_st = np.corrcoef(seq_data_copy[:, gene_names].X, spatial_data_partial_copy[:, gene_names].X, rowvar=True)
         corr_cross = corr_sc_st[:seq_data_copy.shape[0], seq_data_copy.shape[0]:]
 
-        #corr_cross[corr_cross < 0] = 0
+    elif flag=="Cosine":
+        seq_data_copy = adata1.copy()
+        spatial_data_partial_copy = adata2.copy()
+
+        process_data(seq_data_copy)
+        process_data(spatial_data_partial_copy)
+
+        corr_cross = cosine_similarity(seq_data_copy[:, gene_names].X, spatial_data_partial_copy[:, gene_names].X)
 
     else:
         corr_cross = calculate_rank_corr(adata1, adata2, gene_names, flag=flag)
@@ -91,36 +118,6 @@ def get_sample_weights(corr_matrix, topK=50, axis=None):
     return weights, topK_ind
 
 import torch.nn.functional as F
-
-
-# class TrainDL(DataLoader):
-#     """Train data loader."""
-#
-#     def __init__(self, data_loader_dict, **kwargs):
-#         self.data_loader_dict = data_loader_dict
-#         idx_list = []
-#         max_dl = {}
-#         for mode, dl_list in data_loader_dict.items():
-#             idx = np.argmax([dl.dataset.n_obs for dl in dl_list])
-#             idx_list.append(idx)
-#             max_dl[mode] = dl_list[idx]
-#         self.largest_train_dl_idx = idx_list
-#         self.largest_dl = self.data_loader_dict["sc"][0]
-#         super().__init__(self.largest_dl, **kwargs)
-#
-#     def __len__(self):
-#         return len(self.largest_dl)
-#
-#     def __iter__(self):
-#         train_dls_list = []
-#         for largest_idx, (mode, dl_list) in zip(self.largest_train_dl_idx, self.data_loader_dict.items()):
-#             train_dls = [
-#                 dl if i == largest_idx else cycle(dl)
-#                 for i, dl in enumerate(dl_list)
-#             ]
-#             train_dls_list.extend(train_dls)
-#             #train_dls_list[mode] = train_dls
-#         return zip(*train_dls_list)
 
 class TrainDL(DataLoader):
     """Train data loader."""

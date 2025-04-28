@@ -60,8 +60,6 @@ class CTLTrainingPlan(TrainingPlan):
             rec_loss = sum([scl.reconstruction_loss_sum for scl in loss_output_objs])
             kl = sum([scl.kl_local_sum for scl in loss_output_objs])
 
-            print(f"{key} forward, total_loss:{loss:.3f} | contra_loss:{contra_loss*CL_weight:.3f} | kl_loss:{(kl/n_obs):.3f} | rec_loss:{(rec_loss/n_obs):.3f}")
-
             opt1.zero_grad()
             self.manual_backward(loss)
             opt1.step()
@@ -70,7 +68,7 @@ class CTLTrainingPlan(TrainingPlan):
             kl_list.append(kl)
             rec_loss_list.append(rec_loss)
             contra_loss_list.append(contra_loss)
-        print("*"*50)
+            
         return_dict = {
             "loss": sum(total_loss_list),
             "reconstruction_loss_sum": sum(rec_loss_list),

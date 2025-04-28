@@ -54,7 +54,7 @@ optional arguments:
 ### Example running script
 we recommend user to tune the contrastive weight and batch size as their own needs.
 ```
-python run_main.py --generative_dist zinb nb --model_library_size False False --latent_dim 20 --topK_contrastive 50 --CL_weight 5 --corr_metric Pearson --use_gpu --gpu_device cuda:0
+python run_main.py --generative_dist zinb nb --model_library_size False False --latent_dim 20 --topK_contrastive 50 --CL_weight 5 --corr_metric Cosine --use_gpu --gpu_device cuda:0
 ```
 
 

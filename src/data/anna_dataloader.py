@@ -292,24 +292,3 @@ class AnnDataset(Dataset):
         #     return data, label
         # else:
         #     return data
-
-if __name__ == "__main__":
-    # Create an AnnData object (this is just a placeholder, you should load your own AnnData object)
-
-    spatial_adata = sc.read_h5ad('ctx_hipp_hvg_st.h5ad')
-    seq_adata = sc.read_h5ad('ctx_hipp_hvg_sc.h5ad')
-
-    # Create an instance of your custom dataset
-    # ann_dataset = AnnDataset(spatial_adata)
-    #
-    # # Now create the DataLoader
-    # dataloader = DataLoader(ann_dataset, batch_size=32, shuffle=True)
-
-    dl_contra_sc = AnnLoader(seq_adata, batch_size=32, device="mps")
-
-    # Example of iterating over the DataLoader
-    for batch in dl_contra_sc:
-        data = batch.X
-        #labels = batch[1] if len(batch) > 1 else None
-        # Do something with the data, e.g., pass it through a neural network
-        print(data)

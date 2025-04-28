@@ -13,7 +13,7 @@ from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 
 from scvi.nn import Encoder, MultiDecoder, one_hot
-from ..base.dual_transformer_encoder import MultiEncoderCrossAttention
+from base.dual_transformer_encoder import MultiEncoderCrossAttention
 
 torch.backends.cudnn.benchmark = True
 
@@ -470,20 +470,19 @@ class DCVAE(BaseModuleClass):
     def contrast_loss(self, emb_sc, emb_st, label, corr_ind):
         M_sim = F.cosine_similarity(emb_sc[:, None, :], emb_st[None, :, :], dim=-1)
         ind_row, ind_col = corr_ind
-        sub_corr = self.soft_corr.index_select(0, ind_row).index_select(1, ind_col)
 
         if label == "st":
             sub_topK_binary_sc = self.topK_binary_matrix_sc.index_select(0, ind_row).index_select(1, ind_col)
             # get the top rank cell-spot pairs
             # for a given spot, get the topK cell index
-            pos_sc = torch.sum(sub_topK_binary_sc, dim=0) 
-            loss = -torch.sum(torch.mul(M_sim, sub_topK_binary_sc) / sub_corr, dim=0) + torch.mul(torch.logsumexp(M_sim * torch.nn.functional.softmax(~sub_topK_binary_sc / sub_corr, dim=0), dim=0),pos_sc)
+            neg_num = torch.sum(~sub_topK_binary_sc, dim=0)  
+            loss = -torch.sum(torch.mul(M_sim, sub_topK_binary_sc), dim=0) + torch.mul(torch.logsumexp(torch.mul(M_sim, ~sub_topK_binary_sc), dim=0), 1/neg_num)
         
         elif label == "sc":
             sub_topK_binary_st = self.topK_binary_matrix_st.index_select(0, ind_row).index_select(1, ind_col)
             # for a given cell, get the topK spot index
-            pos_st = torch.sum(sub_topK_binary_st, dim=1) 
-            loss = -torch.sum(torch.mul(M_sim, sub_topK_binary_st) / sub_corr, dim=1) + torch.mul(torch.logsumexp(M_sim * torch.nn.functional.softmax(~sub_topK_binary_st / sub_corr, dim=1), dim=1),pos_st)
+            neg_num = torch.sum(~sub_topK_binary_st, dim=1) 
+            loss = -torch.sum(torch.mul(M_sim, sub_topK_binary_st), dim=1) + torch.mul(torch.logsumexp(torch.mul(M_sim, ~sub_topK_binary_st), dim=1), 1/neg_num)
 
         return loss.mean()
 

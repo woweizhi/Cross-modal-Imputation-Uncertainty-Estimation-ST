@@ -5,7 +5,7 @@ import matplotlib as mpl
 import matplotlib.font_manager  # to solve: Font family ['sans-serif'] not found. Falling back to DejaVu Sans.
 import json
 from sklearn.calibration import calibration_curve, CalibrationDisplay
-from sklearn.metrics import roc_auc_score, mean_squared_error
+from sklearn.metrics import roc_auc_score, root_mean_squared_error
 from scipy import stats
 import pandas as pd
 import numpy as np
@@ -148,7 +148,7 @@ def compute_metrics(adata):
         personR = stats.pearsonr(v1.reshape(-1), v2.reshape(-1))
         spearmanR = stats.spearmanr(v1.reshape(-1), v2.reshape(-1))
         kendallTau = stats.kendalltau(v1.reshape(-1), v2.reshape(-1))
-        rmse = mean_squared_error(v1, v2, squared=False)
+        rmse = root_mean_squared_error(v1, v2)
 
         pearson.append(personR[0])
         spearman.append(spearmanR[0])
@@ -160,7 +160,7 @@ def compute_metrics(adata):
 
     norm_rmse = []
     for v1, v2 in zip(norm_raw.T, norm_imputed.T):
-        rmse = mean_squared_error(v1, v2, squared=False)
+        rmse = root_mean_squared_error(v1, v2)
         norm_rmse.append(rmse)
 
     adata.var["AUC"] = auc
@@ -184,7 +184,7 @@ def compute_metrics_nozero(adata):
         personR = stats.pearsonr(v1.reshape(-1), v2.reshape(-1))
         spearmanR = stats.spearmanr(v1.reshape(-1), v2.reshape(-1))
         kendallTau = stats.kendalltau(v1.reshape(-1), v2.reshape(-1))
-        rmse = mean_squared_error(v1, v2, squared=False)
+        rmse = root_mean_squared_error(v1, v2)
 
         pearson.append(personR[0])
         spearman.append(spearmanR[0])
@@ -196,7 +196,7 @@ def compute_metrics_nozero(adata):
 
     norm_rmse = []
     for v1, v2 in zip(norm_raw.T, norm_imputed.T):
-        rmse = mean_squared_error(v1, v2, squared=False)
+        rmse = root_mean_squared_error(v1, v2)
         norm_rmse.append(rmse)
 
     adata.var["Pearson"] = pearson

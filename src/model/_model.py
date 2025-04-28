@@ -10,7 +10,7 @@ import torch
 from anndata import AnnData
 from torch.utils.data.sampler import WeightedRandomSampler
 from torch.utils.data import Sampler
-from ..data.anna_dataloader import AnnLoader
+from data.anna_dataloader import AnnLoader
 
 from scvi import REGISTRY_KEYS, settings
 from scvi.data.fields import CategoricalObsField, LayerField, NumericalObsField
@@ -19,48 +19,34 @@ from scvi.model._utils import parse_device_args
 from scvi.model.base import BaseModelClass, VAEMixin
 from scvi.train import Trainer
 from scvi.utils._docstrings import devices_dsp
-from ..data import data_processing
+from data import data_processing
 from lightning.pytorch.utilities import CombinedLoader
 from scipy.special import softmax
 
 sys.path.append("../")
 
-from ..module._module import DCVAE
-from .._task import CTLTrainingPlan
+from module._module import DCVAE
+from src._task import CTLTrainingPlan
 
 logger = logging.getLogger(__name__)
 
-# Custom sampler to get proper batches instead of joined separate indices
-# maybe move to multi_files
 class BatchIndexSampler(Sampler):
     def __init__(self, n_obs, batch_size, shuffle=False, drop_last=False):
         self.n_obs = n_obs
-        self.batch_size = batch_size if batch_size < n_obs else n_obs
+        self.batch_size = min(batch_size, n_obs)
         self.shuffle = shuffle
         self.drop_last = drop_last
+        self.indices = np.random.permutation(self.n_obs) if shuffle else np.arange(self.n_obs)
 
     def __iter__(self):
-        if self.shuffle:
-            indices = np.random.permutation(self.n_obs).tolist()
-        else:
-            indices = list(range(self.n_obs))
-
         for i in range(0, self.n_obs, self.batch_size):
-            batch = indices[i : min(i + self.batch_size, self.n_obs)]
-
-            # only happens if the last batch is smaller than batch_size
+            batch = self.indices[i:i+self.batch_size]
             if len(batch) < self.batch_size and self.drop_last:
                 continue
-
-            yield batch
+            yield batch.tolist()
 
     def __len__(self):
-        if self.drop_last:
-            length = self.n_obs // self.batch_size
-        else:
-            length = ceil(self.n_obs / self.batch_size)
-
-        return length
+        return self.n_obs // self.batch_size if self.drop_last else ceil(self.n_obs / self.batch_size)
 
 
 def softplus_np(x):
@@ -69,63 +55,73 @@ def softplus_np(x):
 class ContrastSampler(Sampler):
     def __init__(self, sampler, batch_size, topK_ind_matrix, topK_contrast):
         """
-        input
-            sampler: the sampler from another modality
-            batch_size: the batch size for current modality
-            topK_ind_matrix: the topK index of cells/spots in the correlation matrix respect to every single spot/cell
+        Args:
+            sampler (Sampler): Sampler providing indices from another modality.
+            batch_size (int): Batch size for current modality (should match sampler batch size).
+            topK_ind_matrix (np.ndarray): (num_items x topK_contrast) array of indices for positive pairs.
+            topK_contrast (int): Number of top correlated items to choose from.
         """
         self.sampler = sampler
         self.batch_size = batch_size
         self.topK_ind_matrix = topK_ind_matrix
         self.topK_contrast = topK_contrast
-        self.n_obs = 0
+
+        # Correct way to calculate length (should match sampler length)
+        self._length = len(sampler)
 
     def __iter__(self):
-        # iterating the sampler of the other modality to get the sample index
-        # sampling based on the average pearson correlation after softmax, here corr_matrix denote the big pearson correlation matrix
         for ind in self.sampler:
-            topK_ind = np.arange(self.topK_contrast, dtype=int)
-            generate_pos_pair = np.random.choice(topK_ind, size=len(ind))
-            # sample the index with replacement
+            # Randomly select positive pair indices from topK correlated indices
+            generate_pos_pair = np.random.randint(0, self.topK_contrast, size=len(ind))
             batch_ind = self.topK_ind_matrix[ind, generate_pos_pair]
-            self.n_obs = self.n_obs + len(batch_ind)
 
-            yield batch_ind
+            yield batch_ind.tolist()
 
     def __len__(self):
-        return self.n_obs
+        return self._length
 
 class CrossModalSampler(Sampler):
-    def __init__(self, sampler, batch_size, corr_matrix, axis):
+    def __init__(self, sampler, batch_size, corr_matrix, axis=1):
         """
-        input
-            sampler: the sampler from another modality
-            batch_size: the batch size for current modality
-            corr_matrix: the topK correlation matrix between current modality and the other modality
+        Args:
+            sampler (Sampler): Sampler from the other modality.
+            batch_size (int): Batch size for current modality.
+            corr_matrix (np.ndarray): Pearson correlation matrix between modalities.
+            axis (int): Axis along which to take indices from corr_matrix.
+                        axis=1 means the rows correspond to the current modality,
+                        axis=0 means columns correspond to the current modality.
         """
         self.sampler = sampler
         self.batch_size = batch_size
         self.corr_matrix = corr_matrix
         self.axis = axis
-        self.n_obs = 0
+
+        # Pre-calculate length (static, not dynamic)
+        self._length = len(sampler)
 
     def __iter__(self):
-        # iterating the sampler of the other modality to get the sample index
-        # sampling based on the average pearson correlation after softmax, here corr_matrix denote the big pearson correlation matrix
         for ind in self.sampler:
+            # Get the sub-matrix according to indices from other modality
             sub_corr = np.take(self.corr_matrix, ind, axis=self.axis)
-            # average and softmax
+
+            # Compute mean correlation across selected indices
             sub_corr_mean = np.mean(sub_corr, axis=self.axis)
+
+            # Softmax normalization to get sampling probabilities
             sub_corr_prob = softmax(sub_corr_mean)
-            all_batch_ind = np.arange(len(sub_corr_mean))
-            # sample the index with replacement
-            batch_ind = np.random.choice(all_batch_ind, len(ind), p=sub_corr_prob).tolist()
-            self.n_obs = self.n_obs + len(batch_ind)
+
+            all_indices = np.arange(len(sub_corr_mean))
+
+            # Sample indices according to probabilities (with replacement)
+            batch_ind = np.random.choice(
+                all_indices, len(ind), p=sub_corr_prob, replace=True
+            ).tolist()
 
             yield batch_ind
 
     def __len__(self):
-        return self.n_obs
+        # length determined by the number of batches from the other modality
+        return self._length
 
 def _unpack_tensors(tensors):
     x = tensors[REGISTRY_KEYS.X_KEY].squeeze_(0)
